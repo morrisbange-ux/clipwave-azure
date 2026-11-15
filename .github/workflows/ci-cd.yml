@@ -99,12 +99,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Security scan (fail on critical, fixable CVEs)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.meta.outputs.image }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 \
+            image --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "${{ steps.meta.outputs.image }}"
       - name: Push image
         run: |
           docker push "${{ steps.meta.outputs.image }}"
