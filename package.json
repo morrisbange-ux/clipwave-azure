@@ -1,0 +1,40 @@
+{
+  "name": "clipwave",
+  "version": "1.0.0",
+  "description": "ClipWave - a cloud-native short-video sharing app deployed on Azure Container Apps",
+  "main": "src/server.js",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "lint": "eslint .",
+    "test": "jest --coverage",
+    "test:e2e": "playwright test",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.10.2",
+    "@azure/storage-blob": "^12.34.0",
+    "applicationinsights": "^3.17.1",
+    "bcryptjs": "^2.4.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@playwright/test": "1.63.0",
+    "eslint": "^9.30.0",
+    "globals": "^16.3.0",
+    "jest": "^30.0.4",
+    "supertest": "^7.1.3"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/unit/**/*.test.js"],
+    "coverageThreshold": { "global": { "lines": 70 } },
+    "collectCoverageFrom": ["src/**/*.js", "!src/server.js", "!src/telemetry.js", "!src/db/cosmos.js", "!src/storage/blob.js"]
+  }
+}

@@ -1,0 +1,41 @@
+# One-click rollback: sends 100% of production traffic back to an earlier revision.
+name: Rollback production
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Revision name to restore (leave empty = most recent previous revision)'
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-clipwave' }}
+  PROD_APP: clipwave-prod
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Roll back
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          target="${{ inputs.revision }}"
+          current=$(az containerapp revision list -n "$PROD_APP" -g "$RESOURCE_GROUP" --query "sort_by([?properties.active], &properties.trafficWeight)[-1].name" -o tsv)
+          if [ -z "$target" ]; then
+            target=$(az containerapp revision list -n "$PROD_APP" -g "$RESOURCE_GROUP" --all \
+              --query "sort_by([?name!='$current'], &properties.createdTime)[-1].name" -o tsv)
+          fi
+          echo "Rolling back from $current to $target"
+          az containerapp revision activate -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision "$target" || true
+          az containerapp ingress traffic set -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision-weight "$target=100" --output none
+          az containerapp ingress traffic show -n "$PROD_APP" -g "$RESOURCE_GROUP" -o table

@@ -1,0 +1,260 @@
+# ClipWave CI/CD
+#
+#  push / PR ──► test (lint, unit+coverage, e2e, bicep build)
+#                  │  (main branch only from here)
+#                  ▼
+#               build ──► container image -> GitHub Container Registry + Trivy scan
+#                  ▼
+#           deploy-staging ──► smoke test + e2e against staging
+#                  ▼   (manual approval: "production" environment)
+#        production-canary ──► new revision at 0% -> smoke test -> 10% traffic
+#                  ▼   (manual approval: "production-promote" environment)
+#        production-promote ──► 100% traffic, old revisions deactivated
+#
+#  Any failure during the canary automatically rolls traffic back.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-clipwave' }}
+  STAGING_APP: clipwave-staging
+  PROD_APP: clipwave-prod
+
+jobs:
+  test:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit & integration tests (with coverage gate)
+        run: npm test
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          CI: 'true'
+      - name: Validate Bicep templates
+        run: |
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build --file infra/bootstrap.bicep --stdout > /dev/null
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            coverage/
+            playwright-report/
+          retention-days: 14
+
+  build:
+    name: Build & scan image
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image (not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.meta.outputs.image }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Security scan (fail on critical, fixable CVEs)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Push image
+        run: |
+          docker push "${{ steps.meta.outputs.image }}"
+          latest="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
+          docker tag "${{ steps.meta.outputs.image }}" "$latest"
+          docker push "$latest"
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    if: vars.AZURE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy new image to staging
+        id: deploy
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az containerapp update -n "$STAGING_APP" -g "$RESOURCE_GROUP" \
+            --image "${{ needs.build.outputs.image }}" \
+            --set-env-vars GIT_SHA=${{ github.sha }} APP_VERSION=1.0.${{ github.run_number }} \
+            --output none
+          fqdn=$(az containerapp show -n "$STAGING_APP" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)
+          echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Smoke test staging
+        run: node scripts/smoke.js "${{ steps.deploy.outputs.url }}" "${{ github.sha }}"
+      - name: End-to-end tests against staging
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+        env:
+          CI: 'true'
+          BASE_URL: ${{ steps.deploy.outputs.url }}
+
+  production-canary:
+    name: Production canary (10%)
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.urls.outputs.prod }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      new_revision: ${{ steps.canary.outputs.new_revision }}
+      old_revision: ${{ steps.canary.outputs.old_revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Create new revision with 0% traffic
+        id: canary
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          # Revision currently serving the most traffic = the stable ("blue") one.
+          old=$(az containerapp revision list -n "$PROD_APP" -g "$RESOURCE_GROUP" \
+                --query "sort_by([?properties.active], &properties.trafficWeight)[-1].name" -o tsv)
+          echo "Stable revision: $old"
+          # Pin traffic to the stable revision so the new one starts with 0%.
+          az containerapp ingress traffic set -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision-weight "$old=100" --output none
+          suffix="g${GITHUB_SHA::7}-${{ github.run_attempt }}"
+          az containerapp update -n "$PROD_APP" -g "$RESOURCE_GROUP" \
+            --image "${{ needs.build.outputs.image }}" \
+            --revision-suffix "$suffix" \
+            --set-env-vars GIT_SHA=${{ github.sha }} APP_VERSION=1.0.${{ github.run_number }} \
+            --output none
+          new="$PROD_APP--$suffix"
+          echo "New (green) revision: $new"
+          echo "old_revision=$old" >> "$GITHUB_OUTPUT"
+          echo "new_revision=$new" >> "$GITHUB_OUTPUT"
+      - id: urls
+        run: |
+          echo "prod=https://$(az containerapp show -n "$PROD_APP" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)" >> "$GITHUB_OUTPUT"
+          echo "revision=https://$(az containerapp revision show -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision "${{ steps.canary.outputs.new_revision }}" --query properties.fqdn -o tsv)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Smoke test the new revision directly (0% of users)
+        run: node scripts/smoke.js "${{ steps.urls.outputs.revision }}" "${{ github.sha }}"
+      - name: Shift 10% of live traffic to the canary
+        run: |
+          az containerapp ingress traffic set -n "$PROD_APP" -g "$RESOURCE_GROUP" \
+            --revision-weight "${{ steps.canary.outputs.old_revision }}=90" "${{ steps.canary.outputs.new_revision }}=10" --output none
+          az containerapp ingress traffic show -n "$PROD_APP" -g "$RESOURCE_GROUP" -o table
+      - name: Observe canary (health checks for 2 minutes)
+        run: |
+          for i in $(seq 1 12); do
+            node scripts/smoke.js "${{ steps.urls.outputs.prod }}" > /dev/null
+            sleep 10
+          done
+          echo "Canary healthy"
+      - name: Automatic rollback on failure
+        if: failure() && steps.canary.outputs.new_revision != ''
+        run: |
+          echo "::error::Canary failed - routing 100% back to ${{ steps.canary.outputs.old_revision }}"
+          az containerapp ingress traffic set -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision-weight "${{ steps.canary.outputs.old_revision }}=100" --output none
+          az containerapp revision deactivate -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision "${{ steps.canary.outputs.new_revision }}" || true
+
+  production-promote:
+    name: Promote canary to 100%
+    needs: production-canary
+    runs-on: ubuntu-latest
+    environment: production-promote
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Route all traffic to the new revision
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          new="${{ needs.production-canary.outputs.new_revision }}"
+          old="${{ needs.production-canary.outputs.old_revision }}"
+          az containerapp ingress traffic set -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision-weight "$new=100" "$old=0" --output none
+          # Keep the previous revision active (0%) for instant rollback; deactivate anything older.
+          for r in $(az containerapp revision list -n "$PROD_APP" -g "$RESOURCE_GROUP" --query "[?properties.active].name" -o tsv); do
+            if [ "$r" != "$new" ] && [ "$r" != "$old" ]; then
+              az containerapp revision deactivate -n "$PROD_APP" -g "$RESOURCE_GROUP" --revision "$r"
+            fi
+          done
+          az containerapp ingress traffic show -n "$PROD_APP" -g "$RESOURCE_GROUP" -o table
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Final smoke test
+        run: |
+          url="https://$(az containerapp show -n "$PROD_APP" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          node scripts/smoke.js "$url" "${{ github.sha }}"

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClipWave</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="logo">Clip<span>Wave</span></h1>
+    <div class="actions">
+      <span id="whoami" class="who" hidden></span>
+      <button id="uploadBtn" class="btn primary" hidden>+ Upload</button>
+      <button id="loginBtn" class="btn">Log in</button>
+      <button id="logoutBtn" class="btn" hidden>Log out</button>
+    </div>
+  </header>
+
+  <main id="feed" class="feed" aria-label="Video feed">
+    <p id="empty" class="empty" hidden>No videos yet. Log in and upload the first one!</p>
+  </main>
+
+  <footer class="version" id="version" title="Build serving this request"></footer>
+
+  <dialog id="authDialog">
+    <form id="authForm" method="dialog">
+      <h2 id="authTitle">Log in</h2>
+      <label>Username <input name="username" autocomplete="username" required minlength="3" maxlength="20"></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required minlength="8"></label>
+      <p class="error" id="authError" role="alert"></p>
+      <div class="row">
+        <button type="submit" class="btn primary" id="authSubmit">Log in</button>
+        <button type="button" class="btn link" id="authToggle">Need an account? Sign up</button>
+      </div>
+      <button type="button" class="close" data-close aria-label="Close">&times;</button>
+    </form>
+  </dialog>
+
+  <dialog id="uploadDialog">
+    <form id="uploadForm">
+      <h2>Upload a video</h2>
+      <label>Video file (MP4, WebM, MOV) <input type="file" name="file" accept="video/mp4,video/webm,video/quicktime" required></label>
+      <label>Caption <input name="caption" maxlength="150" placeholder="Say something about your clip"></label>
+      <progress id="uploadProgress" max="100" value="0" hidden></progress>
+      <p class="error" id="uploadError" role="alert"></p>
+      <button type="submit" class="btn primary" id="uploadSubmit">Post</button>
+      <button type="button" class="close" data-close aria-label="Close">&times;</button>
+    </form>
+  </dialog>
+
+  <dialog id="commentsDialog">
+    <div class="comments-wrap">
+      <h2>Comments</h2>
+      <ul id="commentList" class="comment-list"></ul>
+      <form id="commentForm" class="row">
+        <input name="text" maxlength="300" placeholder="Add a comment" required aria-label="Comment">
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+      <button type="button" class="close" data-close aria-label="Close">&times;</button>
+    </div>
+  </dialog>
+
+  <template id="cardTpl">
+    <article class="card">
+      <video playsinline loop muted preload="metadata"></video>
+      <div class="meta">
+        <strong class="author"></strong>
+        <p class="caption"></p>
+      </div>
+      <div class="side">
+        <button class="icon like" aria-label="Like"><span class="heart">&#9829;</span><span class="count"></span></button>
+        <button class="icon comment" aria-label="Comments"><span>&#128172;</span><span class="count"></span></button>
+        <button class="icon sound" aria-label="Toggle sound"><span>&#128263;</span></button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

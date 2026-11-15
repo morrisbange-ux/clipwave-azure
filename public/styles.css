@@ -1,0 +1,45 @@
+:root {
+  --bg: #0b0b10; --panel: #17171f; --text: #f4f4f6; --muted: #9a9aab;
+  --accent: #ff2e63; --accent2: #08d9d6; --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.topbar { position: fixed; inset: 0 0 auto 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: linear-gradient(#0b0b10ee, #0b0b1000); }
+.logo { margin: 0; font-size: 1.4rem; letter-spacing: -0.5px; }
+.logo span { color: var(--accent); }
+.actions { display: flex; gap: 8px; align-items: center; }
+.who { color: var(--muted); font-size: .9rem; }
+.btn { border: 1px solid #ffffff30; background: #ffffff10; color: var(--text); padding: 8px 14px; border-radius: 999px; cursor: pointer; font: inherit; }
+.btn.primary { background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.btn.link { background: none; border: none; color: var(--accent2); padding: 8px 0; }
+.feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
+.empty { padding: 40vh 16px 0; text-align: center; color: var(--muted); }
+.card { position: relative; height: 100vh; scroll-snap-align: start; display: grid; place-items: center; background: #000; }
+.card video { height: 100%; max-width: 100%; aspect-ratio: 9 / 16; object-fit: cover; background: #111; }
+.meta { position: absolute; left: 16px; bottom: 48px; right: 90px; text-shadow: 0 1px 3px #000; }
+.meta .author::before { content: "@"; }
+.meta .caption { margin: 6px 0 0; }
+.side { position: absolute; right: 12px; bottom: 60px; display: flex; flex-direction: column; gap: 18px; }
+.icon { background: #00000066; border: none; color: #fff; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-size: 1.4rem; cursor: pointer; line-height: 1; }
+.icon .count { display: block; font-size: .75rem; margin-top: 2px; }
+.icon.liked .heart { color: var(--accent); }
+.version { position: fixed; left: 8px; bottom: 6px; font-size: .7rem; color: var(--muted); z-index: 10; }
+dialog { border: none; border-radius: var(--radius); background: var(--panel); color: var(--text); width: min(420px, calc(100vw - 32px)); padding: 24px; }
+dialog::backdrop { background: #000a; }
+dialog h2 { margin-top: 0; }
+dialog label { display: block; margin-bottom: 14px; font-size: .9rem; color: var(--muted); }
+dialog input { display: block; width: 100%; margin-top: 6px; padding: 10px; border-radius: 8px; border: 1px solid #ffffff25; background: #0b0b10; color: var(--text); font: inherit; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row input { flex: 1; margin: 0; }
+.close { position: absolute; top: 10px; right: 14px; background: none; border: none; color: var(--muted); font-size: 1.6rem; cursor: pointer; }
+.error { color: var(--accent); min-height: 1.2em; font-size: .9rem; }
+progress { width: 100%; margin-bottom: 10px; accent-color: var(--accent2); }
+.comment-list { list-style: none; padding: 0; max-height: 50vh; overflow-y: auto; }
+.comment-list li { padding: 8px 0; border-bottom: 1px solid #ffffff12; }
+.comment-list b { color: var(--accent2); margin-right: 6px; }
+.btn { white-space: nowrap; }
+@media (max-width: 480px) {
+  .who { display: none !important; }
+  .btn { padding: 7px 12px; font-size: .9rem; }
+}
